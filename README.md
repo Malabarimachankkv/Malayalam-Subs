@@ -16,7 +16,9 @@ series, and serves them to any Stremio-compatible app, including Stremio itself 
    out the actual `.srt`/`.vtt` file (players can't open `.zip` links directly).
 5. It briefly caches those extracted files and serves them from its own `/sub/<key>.srt`
    URL — so up to three Malayalam subtitle options can show up in the player's subtitle
-   list, one per site that had a match.
+   list, each one clearly labeled with which site it came from (e.g. "Malayalam (MSone)",
+   "Malayalam (Team GOAT)", "Malayalam (Movie Mirror)"), so you can tell them apart and try
+   another if one doesn't sync well.
 
 Nothing is permanently stored or redistributed — files are only held in memory briefly per
 request, same as a browser cache.

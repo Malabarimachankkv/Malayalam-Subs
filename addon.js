@@ -13,6 +13,15 @@ const PUBLIC_URL = (
   `http://127.0.0.1:${process.env.PORT || 7000}`
 ).replace(/\/$/, '');
 
+// Stremio shows this text verbatim in the subtitle picker whenever it isn't a
+// valid ISO 639-2 code (which "mal" is, but these deliberately aren't) — so
+// each source shows up clearly labeled instead of three unlabeled "Malayalam" entries.
+const SOURCE_LABELS = {
+  msone: 'Malayalam (MSone)',
+  goat: 'Malayalam (Team GOAT)',
+  moviemirror: 'Malayalam (Movie Mirror)',
+};
+
 const manifest = {
   id: 'org.msone.malayalam.subtitles',
   version: '3.0.0',
@@ -73,14 +82,17 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
         subtitles.push({
           id: `${name}-${id}`,
           url: servedUrl,
-          lang: 'mal', // Malayalam (ISO 639-2)
+          lang: SOURCE_LABELS[name] || 'mal',
         });
       } catch (err) {
         console.error(`${name} fetchSubtitleFile failed:`, err.message);
       }
     }
 
-    return { subtitles, cacheMaxAge: 6 * 60 * 60 };
+    // No cacheMaxAge: tell Stremio/Nuvio not to hold onto this response, so a
+    // fresh lookup always happens per video. Our own internal search/file
+    // caches still keep things fast; this only affects client-side caching.
+    return { subtitles };
   } catch (err) {
     console.error('subtitles handler error:', err.message);
     return { subtitles: [] };
