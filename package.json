@@ -1,0 +1,23 @@
+{
+  "name": "msone-subtitles-addon",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "adm-zip": "^0.6.0",
+    "axios": "^1.18.1",
+    "cheerio": "^1.2.0",
+    "express": "^5.2.1",
+    "node-cache": "^5.1.2",
+    "stremio-addon-sdk": "^1.6.10"
+  }
+}
