@@ -50,18 +50,30 @@ function parseId(id) {
 
 builder.defineSubtitlesHandler(async ({ type, id }) => {
   try {
-    const { imdbId, season } = parseId(id);
+    const { imdbId, season, episode } = parseId(id);
     const meta = await getMeta(type, imdbId);
     if (!meta || !meta.title) return { subtitles: [] };
 
-    // Both sites group series subtitles by season, so include the season number.
-    const query = type === 'series' && season ? `${meta.title} Season ${season}` : meta.title;
+    // Sites usually include the season number in a show's listing once it has
+    // multiple seasons, but a freshly-released show's first season is often
+    // listed under just its plain name with no "Season 1" anywhere yet. Try
+    // the season-qualified query first (helps pick the right season when a
+    // show has several), and fall back to the bare title if that finds nothing.
+    const primaryQuery = type === 'series' && season ? `${meta.title} Season ${season}` : meta.title;
+    const fallbackQuery = type === 'series' ? meta.title : null;
+
+    async function searchSource(fn) {
+      const primary = await fn(primaryQuery);
+      if (primary) return primary;
+      if (fallbackQuery) return fn(fallbackQuery);
+      return null;
+    }
 
     // Query all sources in parallel; one failing/missing shouldn't block the others.
     const [msoneResult, goatResult, mirrorResult] = await Promise.allSettled([
-      msone.findSubtitleUrl(query, meta.year),
-      goat.findSubtitleUrl(query, meta.year, imdbId),
-      moviemirror.findSubtitleUrl(query, meta.year, imdbId),
+      searchSource((q) => msone.findSubtitleUrl(q, meta.year)),
+      searchSource((q) => goat.findSubtitleUrl(q, meta.year, imdbId)),
+      searchSource((q) => moviemirror.findSubtitleUrl(q, meta.year, imdbId)),
     ]);
 
     const sources = [
@@ -74,9 +86,9 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
     for (const { name, result } of sources) {
       if (!result) continue;
       try {
-        // Some sources zip their subtitles, some don't; this handles either
-        // and always hands back a plain .srt/.vtt file.
-        const file = await msone.fetchSubtitleFile(result.url);
+        // Some sources zip subtitles per-season, with one file per episode
+        // inside — episode tells fetchSubtitleFile which one to pull out.
+        const file = await msone.fetchSubtitleFile(result.url, episode);
         const key = fileCache.put(file);
         const servedUrl = `${PUBLIC_URL}/sub/${key}${file.ext}`;
         subtitles.push({
