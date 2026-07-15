@@ -82,13 +82,20 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       { name: 'moviemirror', result: mirrorResult.status === 'fulfilled' ? mirrorResult.value : null },
     ];
 
+    // Each source's fetchSubtitleFile sends that source's own site as the
+    // Referer header, which matters for sources like Movie Mirror that serve
+    // files straight from /wp-content/uploads/ and can reject a foreign
+    // Referer — calling the wrong module's fetchSubtitleFile silently broke
+    // downloads for whichever source wasn't msone.
+    const FETCHERS = { msone, goat, moviemirror };
+
     const subtitles = [];
     for (const { name, result } of sources) {
       if (!result) continue;
       try {
         // Some sources zip subtitles per-season, with one file per episode
         // inside — episode tells fetchSubtitleFile which one to pull out.
-        const file = await msone.fetchSubtitleFile(result.url, episode);
+        const file = await FETCHERS[name].fetchSubtitleFile(result.url, episode);
         const key = fileCache.put(file);
         const servedUrl = `${PUBLIC_URL}/sub/${key}${file.ext}`;
         subtitles.push({
