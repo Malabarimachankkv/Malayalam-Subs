@@ -2,10 +2,23 @@ const express = require('express');
 const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const fileCache = require('./lib/fileCache');
+const msone = require('./lib/msone');
+const moviemirror = require('./lib/moviemirror');
 
 const PORT = process.env.PORT || 7000;
 
 const app = express();
+
+// MSone (~300 pages) and Movie Mirror (100+ pages) build their catalogs as a
+// background crawl the first time they're needed, since doing it live per
+// request would be too slow. Triggering that here means it starts the
+// instant the server boots, instead of waiting for someone's first live
+// subtitle lookup to kick it off — shaves the wait down as much as code can.
+// This does NOT fix a server that keeps going to sleep on a free host between
+// uses (each sleep/wake starts the crawl over) — see README for the actual
+// fix for that (a free uptime monitor pinging /manifest.json every few minutes).
+msone.getIndexNonBlocking();
+moviemirror.getIndexNonBlocking();
 
 // Mounts /manifest.json, /subtitles/*, etc. (the standard Stremio addon protocol)
 app.use(getRouter(addonInterface));

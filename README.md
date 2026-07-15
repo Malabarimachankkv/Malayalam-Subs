@@ -81,6 +81,27 @@ addons, so make sure your host provides a TLS certificate (all three above do th
 
 Nuvio speaks the same addon protocol as Stremio, so no changes are needed between the two.
 
+## Strongly recommended: keep the server from sleeping
+
+Render's free tier puts your server to sleep after 15 minutes of no traffic, and each
+wake-up is a brand new process with an empty memory. MSone (~300 pages) and Movie Mirror
+(100+ pages) build their catalogs as a background crawl the first time they're needed —
+Team GOAT only needs one quick page fetch, so it always finishes before you notice, but
+MSone and Movie Mirror's multi-page crawls can easily still be mid-crawl when the server
+goes back to sleep, meaning they silently never finish and those two sources look broken
+even though nothing is actually wrong.
+
+Fix: use a free uptime monitor to ping your manifest URL every few minutes so Render never
+puts the server to sleep in the first place. [UptimeRobot](https://uptimerobot.com)'s free
+plan (no card required) works well for this:
+1. Sign up free → **Add New Monitor** → type **HTTP(s)**
+2. URL: `https://<your-app>/manifest.json`
+3. Interval: 5 minutes (the free plan's fixed interval — plenty fast enough here)
+4. Save
+
+Once that's running, MSone and Movie Mirror's indexes only ever have to build once and then
+stay warm, refreshing quietly in the background every 12 hours.
+
 ## Known limitation: Cloudflare
 
 MSone's site sits behind Cloudflare's bot-protection on some pages. Most of the time

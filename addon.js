@@ -62,11 +62,35 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
     const primaryQuery = type === 'series' && season ? `${meta.title} Season ${season}` : meta.title;
     const fallbackQuery = type === 'series' ? meta.title : null;
 
+    // A bare-title fallback search can't tell seasons apart — for a show with
+    // several numbered seasons on a site (e.g. GOAT listing House of the
+    // Dragon as three separate Season 1/2/3 pages), dropping "Season N" from
+    // the query makes all of them match equally, and the code would silently
+    // serve whichever one happened to come first — Season 1's subtitles for
+    // a Season 4 episode, with no error or warning. If we can read an actual
+    // season number off the matched title and it doesn't agree with what was
+    // requested, that's a confirmed wrong-season match — refuse it rather
+    // than guess. Titles with no identifiable season number at all (the
+    // actual case this fallback exists for) still pass through untouched.
+    function extractSeasonNumber(title) {
+      const m = (title || '').match(/season\s*0*(\d{1,2})\b|\bs0*(\d{1,2})e\d{1,3}\b/i);
+      if (!m) return null;
+      return parseInt(m[1] || m[2], 10);
+    }
+
     async function searchSource(fn) {
       const primary = await fn(primaryQuery);
       if (primary) return primary;
-      if (fallbackQuery) return fn(fallbackQuery);
-      return null;
+      if (!fallbackQuery) return null;
+
+      const fallback = await fn(fallbackQuery);
+      if (fallback && season) {
+        const foundSeason = extractSeasonNumber(fallback.matchedTitle);
+        if (foundSeason !== null && foundSeason !== season) {
+          return null; // confirmed different season — don't serve it
+        }
+      }
+      return fallback;
     }
 
     // Query all sources in parallel; one failing/missing shouldn't block the others.
