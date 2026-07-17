@@ -118,18 +118,27 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
     // *next* request for this title/episode is a cache hit.
     await Promise.all(
       Object.keys(SOURCE_MODULES).map(async (name) => {
+        // B2 is a speed optimization, never a hard dependency — if it's
+        // misconfigured or B2 itself is briefly down, that must degrade to
+        // "treat as cache miss," not take down the live scrape underneath it.
+        let cached = null;
         try {
-          const cached = await subtitleCache.getCached(name, imdbId, type, season, episode);
-          if (cached) {
-            const key = fileCache.put(cached);
-            subtitles.push({
-              id: `${name}-${id}`,
-              url: `${PUBLIC_URL}/sub/${key}${cached.ext}`,
-              lang: SOURCE_LABELS[name] || 'mal',
-            });
-            return;
-          }
+          cached = await subtitleCache.getCached(name, imdbId, type, season, episode);
+        } catch (err) {
+          console.error(`${name} cache read failed (falling back to live scrape):`, err.message);
+        }
 
+        if (cached) {
+          const key = fileCache.put(cached);
+          subtitles.push({
+            id: `${name}-${id}`,
+            url: `${PUBLIC_URL}/sub/${key}${cached.ext}`,
+            lang: SOURCE_LABELS[name] || 'mal',
+          });
+          return;
+        }
+
+        try {
           const result = await SEARCHERS[name]();
           if (!result) return;
 
