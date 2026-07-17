@@ -5,6 +5,7 @@ const goat = require('./lib/goat');
 const moviemirror = require('./lib/moviemirror');
 const fileCache = require('./lib/fileCache');
 const pool = require('./lib/pool');
+const subtitleCache = require('./lib/subtitleCache');
 const { CONTENT_TYPES } = require('./lib/fetchFile');
 
 // Render sets RENDER_EXTERNAL_URL automatically. On other hosts, set a PUBLIC_URL
@@ -96,46 +97,63 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       return fallback;
     }
 
-    // Query all sources in parallel; one failing/missing shouldn't block the others.
-    const [msoneResult, goatResult, mirrorResult] = await Promise.allSettled([
-      searchSource((q) => msone.findSubtitleUrl(q, meta.year)),
-      searchSource((q) => goat.findSubtitleUrl(q, meta.year, imdbId)),
-      searchSource((q) => moviemirror.findSubtitleUrl(q, meta.year, imdbId)),
-    ]);
-
-    const sources = [
-      { name: 'msone', result: msoneResult.status === 'fulfilled' ? msoneResult.value : null },
-      { name: 'goat', result: goatResult.status === 'fulfilled' ? goatResult.value : null },
-      { name: 'moviemirror', result: mirrorResult.status === 'fulfilled' ? mirrorResult.value : null },
-    ];
-
     // Each source's fetchSubtitleFile sends that source's own site as the
     // Referer header, which matters for sources like Movie Mirror that serve
     // files straight from /wp-content/uploads/ and can reject a foreign
     // Referer — calling the wrong module's fetchSubtitleFile silently broke
     // downloads for whichever source wasn't msone.
-    const FETCHERS = { msone, goat, moviemirror };
+    const SOURCE_MODULES = { msone, goat, moviemirror };
+    const SEARCHERS = {
+      msone: () => searchSource((q) => msone.findSubtitleUrl(q, meta.year)),
+      goat: () => searchSource((q) => goat.findSubtitleUrl(q, meta.year, imdbId)),
+      moviemirror: () => searchSource((q) => moviemirror.findSubtitleUrl(q, meta.year, imdbId)),
+    };
 
     const subtitles = [];
-    for (const { name, result } of sources) {
-      if (!result) continue;
-      try {
-        // Some sources zip subtitles per-season, with one file per episode
-        // inside — episode tells fetchSubtitleFile which one to pull out.
-        const file = await FETCHERS[name].fetchSubtitleFile(result.url, episode);
-        const key = fileCache.put(file);
-        const servedUrl = `${PUBLIC_URL}/sub/${key}${file.ext}`;
-        subtitles.push({
-          id: `${name}-${id}`,
-          url: servedUrl,
-          lang: SOURCE_LABELS[name] || 'mal',
-        });
-      } catch (err) {
-        console.error(`${name} fetchSubtitleFile failed:`, err.message);
-      }
-    }
 
-    // Manually-uploaded fallback pool (Drive-backed) — checked by exact IMDb
+    // For each source: check the B2 cache first. A hit means we already
+    // scraped this exact title/episode before, so skip hitting the source
+    // site entirely — faster for the user and lighter on the source sites.
+    // A miss means search + fetch as before, then cache the result so the
+    // *next* request for this title/episode is a cache hit.
+    await Promise.all(
+      Object.keys(SOURCE_MODULES).map(async (name) => {
+        try {
+          const cached = await subtitleCache.getCached(name, imdbId, type, season, episode);
+          if (cached) {
+            const key = fileCache.put(cached);
+            subtitles.push({
+              id: `${name}-${id}`,
+              url: `${PUBLIC_URL}/sub/${key}${cached.ext}`,
+              lang: SOURCE_LABELS[name] || 'mal',
+            });
+            return;
+          }
+
+          const result = await SEARCHERS[name]();
+          if (!result) return;
+
+          // Some sources zip subtitles per-season, with one file per episode
+          // inside — episode tells fetchSubtitleFile which one to pull out.
+          const file = await SOURCE_MODULES[name].fetchSubtitleFile(result.url, episode);
+
+          subtitleCache.setCached(name, imdbId, type, season, episode, file).catch((err) => {
+            console.error(`${name} cache write failed (serving live result anyway):`, err.message);
+          });
+
+          const key = fileCache.put(file);
+          subtitles.push({
+            id: `${name}-${id}`,
+            url: `${PUBLIC_URL}/sub/${key}${file.ext}`,
+            lang: SOURCE_LABELS[name] || 'mal',
+          });
+        } catch (err) {
+          console.error(`${name} lookup failed:`, err.message);
+        }
+      })
+    );
+
+    // Manually-uploaded fallback pool (B2-backed) — checked by exact IMDb
     // id match rather than fuzzy title search, so it's reliable even for
     // titles the three scrapers can't find at all.
     try {

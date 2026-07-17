@@ -102,48 +102,61 @@ plan (no card required) works well for this:
 Once that's running, MSone and Movie Mirror's indexes only ever have to build once and then
 stay warm, refreshing quietly in the background every 12 hours.
 
-## Manual subtitle pool (for titles the scrapers can't find)
+## Storage: Backblaze B2 (subtitle pool + auto-cache)
 
-Sometimes a title genuinely has a Malayalam subtitle on MSone/GOAT/Movie Mirror but this
-addon still can't fetch it (site changed its markup, Cloudflare blocked the request, weird
-naming, etc.). For those cases there's a 4th subtitle source: a manually-curated pool you
-upload to yourself, stored in **your own Google Drive** — not this server's disk — so it
-survives Render's free-tier restarts/sleeps without you re-uploading anything.
+This addon uses [Backblaze B2](https://www.backblaze.com/cloud-storage) — free object
+storage (10GB free, no credit card required to sign up) — for two things:
 
-It shows up in the subtitle picker as **"Malayalam (Community Upload)"**, matched by exact
-IMDb id (and season/episode for series) rather than fuzzy title search, so it's more
-reliable than the scraped sources whenever it has a match.
+1. **The manual subtitle pool** — titles you've uploaded yourself because the scrapers
+   couldn't find them (see below).
+2. **Auto-caching scraped subtitles** — the first time someone requests a title, the addon
+   scrapes MSone/GOAT/Movie Mirror as normal and saves a copy to B2. Every request after
+   that for the *same* title/episode is served straight from B2 instead of re-scraping the
+   source site — faster, and it keeps working even if a source site is temporarily down or
+   changes its markup.
+
+Nothing is written to this server's own disk, so none of this is lost when Render's
+free-tier restarts or sleeps.
 
 ### One-time setup
 
-**1. Create a Google Cloud service account** (a robot account, not your personal login):
-1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project (or use an existing one).
-2. **APIs & Services → Library** → search "Google Drive API" → **Enable**.
-3. **APIs & Services → Credentials** → **Create Credentials → Service Account** → give it
-   any name (e.g. `subtitle-pool-bot`) → **Done**.
-4. Click into that service account → **Keys** tab → **Add Key → Create new key → JSON** →
-   it downloads a `.json` file. Keep this private, like a password.
-5. Open that JSON file and copy the `client_email` value (looks like
-   `subtitle-pool-bot@your-project.iam.gserviceaccount.com`).
+**1. Create a Backblaze account and bucket:**
+1. Sign up free at [backblaze.com/sign-up/cloud-storage](https://www.backblaze.com/sign-up/cloud-storage) — no card needed.
+2. In the dashboard, go to **B2 Cloud Storage → Buckets → Create a Bucket**.
+3. Name it anything unique (e.g. `malayalam-subs-pool`) → set **Files in Bucket are: Private** → **Create Bucket**.
+4. Click into the bucket → note the **Endpoint** shown (looks like `s3.us-west-004.backblazeb2.com`)
+   — the part after `s3.` and before `.backblazeb2.com` (e.g. `us-west-004`) is your region.
 
-**2. Share your Drive folder with the robot:**
-1. In Google Drive, open (or create) the folder you want to use as the subtitle pool.
-2. Right-click → **Share** → paste the `client_email` from step 1 → give it **Editor**
-   access → Send (it's fine that it's not a real person — it'll just show an email invite
-   warning, ignore it).
-3. Open the folder and copy its id from the URL:
-   `https://drive.google.com/drive/folders/`**`THIS_PART_IS_THE_FOLDER_ID`**
+**2. Create an application key:**
+1. Left sidebar → **Application Keys** → **Add a New Application Key**.
+2. Name it anything, restrict it to the bucket you just made, allow **Read and Write** → **Create New Key**.
+3. Copy the **keyID** and **applicationKey** shown — like the Drive JSON key, the
+   applicationKey is only shown once, so copy it now.
 
 **3. Set environment variables on your host** (Render: your service → **Environment** tab):
 
 | Variable | Value |
 |---|---|
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | The **entire contents** of the JSON key file from step 1, pasted as one value |
-| `GDRIVE_FOLDER_ID` | The folder id from step 2.3 |
+| `B2_ENDPOINT` | `https://s3.<region>.backblazeb2.com` (e.g. `https://s3.us-west-004.backblazeb2.com`) |
+| `B2_REGION` | Just the region part (e.g. `us-west-004`) |
+| `B2_BUCKET` | Your bucket name |
+| `B2_KEY_ID` | The keyID from step 2.3 |
+| `B2_APPLICATION_KEY` | The applicationKey from step 2.3 |
 | `ADMIN_USER` | Any username you want for the upload dashboard |
 | `ADMIN_PASSWORD` | Any password you want for the upload dashboard |
 
 Redeploy after adding these (Render redeploys automatically when env vars change).
+
+## Manual subtitle pool (for titles the scrapers can't find)
+
+Sometimes a title genuinely has a Malayalam subtitle on MSone/GOAT/Movie Mirror but this
+addon still can't fetch it (site changed its markup, Cloudflare blocked the request, weird
+naming, etc.). For those cases there's a 4th subtitle source: a manually-curated pool you
+upload to yourself via a small dashboard, stored in B2 (see above).
+
+It shows up in the subtitle picker as **"Malayalam (Community Upload)"**, matched by exact
+IMDb id (and season/episode for series) rather than fuzzy title search, so it's more
+reliable than the scraped sources whenever it has a match.
 
 ### Using it
 
@@ -159,10 +172,6 @@ will prompt for these), then:
 
 The dashboard also lists everything currently in the pool, with a delete button per entry.
 
-Uploads go straight to your Drive folder — you can also just drag files into that folder
-yourself in Drive, but they won't show up in the addon until they've gone through the
-dashboard once (that's what writes the IMDb-id/season/episode mapping the addon actually
-matches against).
 
 
 
