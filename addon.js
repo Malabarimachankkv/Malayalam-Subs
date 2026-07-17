@@ -4,6 +4,8 @@ const msone = require('./lib/msone');
 const goat = require('./lib/goat');
 const moviemirror = require('./lib/moviemirror');
 const fileCache = require('./lib/fileCache');
+const pool = require('./lib/pool');
+const { CONTENT_TYPES } = require('./lib/fetchFile');
 
 // Render sets RENDER_EXTERNAL_URL automatically. On other hosts, set a PUBLIC_URL
 // env var to your public https:// URL (see README).
@@ -20,6 +22,7 @@ const SOURCE_LABELS = {
   msone: 'Malayalam (MSone)',
   goat: 'Malayalam (Team GOAT)',
   moviemirror: 'Malayalam (Movie Mirror)',
+  pool: 'Malayalam (Community Upload)',
 };
 
 const manifest = {
@@ -130,6 +133,26 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       } catch (err) {
         console.error(`${name} fetchSubtitleFile failed:`, err.message);
       }
+    }
+
+    // Manually-uploaded fallback pool (Drive-backed) — checked by exact IMDb
+    // id match rather than fuzzy title search, so it's reliable even for
+    // titles the three scrapers can't find at all.
+    try {
+      const poolMatches = await pool.findMatches(imdbId, type, season, episode);
+      for (const match of poolMatches) {
+        const buffer = await pool.getFileBuffer(match);
+        const contentType = CONTENT_TYPES[match.ext] || 'application/x-subrip; charset=utf-8';
+        const key = fileCache.put({ buffer, ext: match.ext, contentType });
+        const servedUrl = `${PUBLIC_URL}/sub/${key}${match.ext}`;
+        subtitles.push({
+          id: `pool-${match.id}-${id}`,
+          url: servedUrl,
+          lang: SOURCE_LABELS.pool,
+        });
+      }
+    } catch (err) {
+      console.error('pool lookup failed:', err.message);
     }
 
     // No cacheMaxAge: tell Stremio/Nuvio not to hold onto this response, so a

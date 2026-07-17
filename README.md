@@ -102,7 +102,69 @@ plan (no card required) works well for this:
 Once that's running, MSone and Movie Mirror's indexes only ever have to build once and then
 stay warm, refreshing quietly in the background every 12 hours.
 
-## Known limitation: Cloudflare
+## Manual subtitle pool (for titles the scrapers can't find)
+
+Sometimes a title genuinely has a Malayalam subtitle on MSone/GOAT/Movie Mirror but this
+addon still can't fetch it (site changed its markup, Cloudflare blocked the request, weird
+naming, etc.). For those cases there's a 4th subtitle source: a manually-curated pool you
+upload to yourself, stored in **your own Google Drive** — not this server's disk — so it
+survives Render's free-tier restarts/sleeps without you re-uploading anything.
+
+It shows up in the subtitle picker as **"Malayalam (Community Upload)"**, matched by exact
+IMDb id (and season/episode for series) rather than fuzzy title search, so it's more
+reliable than the scraped sources whenever it has a match.
+
+### One-time setup
+
+**1. Create a Google Cloud service account** (a robot account, not your personal login):
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) → create a project (or use an existing one).
+2. **APIs & Services → Library** → search "Google Drive API" → **Enable**.
+3. **APIs & Services → Credentials** → **Create Credentials → Service Account** → give it
+   any name (e.g. `subtitle-pool-bot`) → **Done**.
+4. Click into that service account → **Keys** tab → **Add Key → Create new key → JSON** →
+   it downloads a `.json` file. Keep this private, like a password.
+5. Open that JSON file and copy the `client_email` value (looks like
+   `subtitle-pool-bot@your-project.iam.gserviceaccount.com`).
+
+**2. Share your Drive folder with the robot:**
+1. In Google Drive, open (or create) the folder you want to use as the subtitle pool.
+2. Right-click → **Share** → paste the `client_email` from step 1 → give it **Editor**
+   access → Send (it's fine that it's not a real person — it'll just show an email invite
+   warning, ignore it).
+3. Open the folder and copy its id from the URL:
+   `https://drive.google.com/drive/folders/`**`THIS_PART_IS_THE_FOLDER_ID`**
+
+**3. Set environment variables on your host** (Render: your service → **Environment** tab):
+
+| Variable | Value |
+|---|---|
+| `GOOGLE_SERVICE_ACCOUNT_KEY` | The **entire contents** of the JSON key file from step 1, pasted as one value |
+| `GDRIVE_FOLDER_ID` | The folder id from step 2.3 |
+| `ADMIN_USER` | Any username you want for the upload dashboard |
+| `ADMIN_PASSWORD` | Any password you want for the upload dashboard |
+
+Redeploy after adding these (Render redeploys automatically when env vars change).
+
+### Using it
+
+Go to `https://<your-app>/admin`, log in with `ADMIN_USER`/`ADMIN_PASSWORD` (your browser
+will prompt for these), then:
+1. Pick **Movie** or **Series**.
+2. Type the title in the search box and click the correct result — this is what tags the
+   file with the right IMDb id, so get this right.
+3. For a series, fill in **Season**, and **Episode** if you're uploading a single episode's
+   `.srt` directly (leave Episode blank if uploading a `.zip` with a whole season's `.srt`
+   files inside — the addon reads each episode number from the filenames in the zip).
+4. Choose the file and click **Upload**.
+
+The dashboard also lists everything currently in the pool, with a delete button per entry.
+
+Uploads go straight to your Drive folder — you can also just drag files into that folder
+yourself in Drive, but they won't show up in the addon until they've gone through the
+dashboard once (that's what writes the IMDb-id/season/episode mapping the addon actually
+matches against).
+
+
 
 MSone's site sits behind Cloudflare's bot-protection on some pages. Most of the time
 requests from a normal cloud server pass fine, but if you start seeing empty subtitle
