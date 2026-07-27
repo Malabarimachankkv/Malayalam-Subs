@@ -1,12 +1,8 @@
 const { addonBuilder } = require('stremio-addon-sdk');
 const { getMeta } = require('./lib/cinemeta');
-const msone = require('./lib/msone');
 const goat = require('./lib/goat');
 const moviemirror = require('./lib/moviemirror');
 const fileCache = require('./lib/fileCache');
-const pool = require('./lib/pool');
-const subtitleCache = require('./lib/subtitleCache');
-const { CONTENT_TYPES } = require('./lib/fetchFile');
 
 // Render sets RENDER_EXTERNAL_URL automatically. On other hosts, set a PUBLIC_URL
 // env var to your public https:// URL (see README).
@@ -18,21 +14,18 @@ const PUBLIC_URL = (
 
 // Stremio shows this text verbatim in the subtitle picker whenever it isn't a
 // valid ISO 639-2 code (which "mal" is, but these deliberately aren't) — so
-// each source shows up clearly labeled instead of three unlabeled "Malayalam" entries.
+// each source shows up clearly labeled instead of unlabeled "Malayalam" entries.
 const SOURCE_LABELS = {
-  msone: 'Malayalam (MSone)',
   goat: 'Malayalam (Team GOAT)',
   moviemirror: 'Malayalam (Movie Mirror)',
-  pool: 'Malayalam (Community Upload)',
 };
 
 const manifest = {
   id: 'org.msone.malayalam.subtitles',
-  version: '3.0.0',
-  name: 'Malayalam Subtitles (MSone + GOAT + Movie Mirror)',
+  version: '5.0.0',
+  name: 'Malayalam Subtitles (Team GOAT + Movie Mirror)',
   description:
-    'Free Malayalam subtitles for movies and series, pulled from malayalamsubtitles.org (MSone), malayalamsubtitles.in (Team GOAT), and moviemirrorsubtitles.com (Movie Mirror).',
-  logo: 'https://malayalamsubtitles.org/wp-content/uploads/2025/03/msone-main-navbar-logo.webp',
+    'Free Malayalam subtitles for movies and series, pulled from malayalamsubtitles.in (Team GOAT) and moviemirrorsubtitles.com (Movie Mirror). No account or API key needed — just install and go. For MSone, install their own official addon (addon.malayalamsubtitles.org) alongside this one.',
   resources: ['subtitles'],
   types: ['movie', 'series'],
   catalogs: [],
@@ -97,89 +90,41 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       return fallback;
     }
 
+    // Query all sources in parallel; one failing/missing shouldn't block the others.
+    const [goatResult, mirrorResult] = await Promise.allSettled([
+      searchSource((q) => goat.findSubtitleUrl(q, meta.year, imdbId)),
+      searchSource((q) => moviemirror.findSubtitleUrl(q, meta.year, imdbId)),
+    ]);
+
+    const sources = [
+      { name: 'goat', result: goatResult.status === 'fulfilled' ? goatResult.value : null },
+      { name: 'moviemirror', result: mirrorResult.status === 'fulfilled' ? mirrorResult.value : null },
+    ];
+
     // Each source's fetchSubtitleFile sends that source's own site as the
     // Referer header, which matters for sources like Movie Mirror that serve
     // files straight from /wp-content/uploads/ and can reject a foreign
     // Referer — calling the wrong module's fetchSubtitleFile silently broke
-    // downloads for whichever source wasn't msone.
-    const SOURCE_MODULES = { msone, goat, moviemirror };
-    const SEARCHERS = {
-      msone: () => searchSource((q) => msone.findSubtitleUrl(q, meta.year)),
-      goat: () => searchSource((q) => goat.findSubtitleUrl(q, meta.year, imdbId)),
-      moviemirror: () => searchSource((q) => moviemirror.findSubtitleUrl(q, meta.year, imdbId)),
-    };
+    // downloads for whichever source it wasn't written for.
+    const FETCHERS = { goat, moviemirror };
 
     const subtitles = [];
-
-    // For each source: check the B2 cache first. A hit means we already
-    // scraped this exact title/episode before, so skip hitting the source
-    // site entirely — faster for the user and lighter on the source sites.
-    // A miss means search + fetch as before, then cache the result so the
-    // *next* request for this title/episode is a cache hit.
-    await Promise.all(
-      Object.keys(SOURCE_MODULES).map(async (name) => {
-        // B2 is a speed optimization, never a hard dependency — if it's
-        // misconfigured or B2 itself is briefly down, that must degrade to
-        // "treat as cache miss," not take down the live scrape underneath it.
-        let cached = null;
-        try {
-          cached = await subtitleCache.getCached(name, imdbId, type, season, episode);
-        } catch (err) {
-          console.error(`${name} cache read failed (falling back to live scrape):`, err.message);
-        }
-
-        if (cached) {
-          const key = fileCache.put(cached);
-          subtitles.push({
-            id: `${name}-${id}`,
-            url: `${PUBLIC_URL}/sub/${key}${cached.ext}`,
-            lang: SOURCE_LABELS[name] || 'mal',
-          });
-          return;
-        }
-
-        try {
-          const result = await SEARCHERS[name]();
-          if (!result) return;
-
-          // Some sources zip subtitles per-season, with one file per episode
-          // inside — episode tells fetchSubtitleFile which one to pull out.
-          const file = await SOURCE_MODULES[name].fetchSubtitleFile(result.url, episode);
-
-          subtitleCache.setCached(name, imdbId, type, season, episode, file).catch((err) => {
-            console.error(`${name} cache write failed (serving live result anyway):`, err.message);
-          });
-
-          const key = fileCache.put(file);
-          subtitles.push({
-            id: `${name}-${id}`,
-            url: `${PUBLIC_URL}/sub/${key}${file.ext}`,
-            lang: SOURCE_LABELS[name] || 'mal',
-          });
-        } catch (err) {
-          console.error(`${name} lookup failed:`, err.message);
-        }
-      })
-    );
-
-    // Manually-uploaded fallback pool (B2-backed) — checked by exact IMDb
-    // id match rather than fuzzy title search, so it's reliable even for
-    // titles the three scrapers can't find at all.
-    try {
-      const poolMatches = await pool.findMatches(imdbId, type, season, episode);
-      for (const match of poolMatches) {
-        const buffer = await pool.getFileBuffer(match);
-        const contentType = CONTENT_TYPES[match.ext] || 'application/x-subrip; charset=utf-8';
-        const key = fileCache.put({ buffer, ext: match.ext, contentType });
-        const servedUrl = `${PUBLIC_URL}/sub/${key}${match.ext}`;
+    for (const { name, result } of sources) {
+      if (!result) continue;
+      try {
+        // Some sources zip subtitles per-season, with one file per episode
+        // inside — episode tells fetchSubtitleFile which one to pull out.
+        const file = await FETCHERS[name].fetchSubtitleFile(result.url, episode);
+        const key = fileCache.put(file);
+        const servedUrl = `${PUBLIC_URL}/sub/${key}${file.ext}`;
         subtitles.push({
-          id: `pool-${match.id}-${id}`,
+          id: `${name}-${id}`,
           url: servedUrl,
-          lang: SOURCE_LABELS.pool,
+          lang: SOURCE_LABELS[name] || 'mal',
         });
+      } catch (err) {
+        console.error(`${name} fetchSubtitleFile failed:`, err.message);
       }
-    } catch (err) {
-      console.error('pool lookup failed:', err.message);
     }
 
     // No cacheMaxAge: tell Stremio/Nuvio not to hold onto this response, so a
