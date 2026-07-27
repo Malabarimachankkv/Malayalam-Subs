@@ -24,8 +24,7 @@ const manifest = {
   id: 'org.msone.malayalam.subtitles',
   version: '5.0.0',
   name: 'Malayalam Subtitles (Team GOAT + Movie Mirror)',
-  description:
-    'Free Malayalam subtitles for movies and series, pulled from malayalamsubtitles.in (Team GOAT) and moviemirrorsubtitles.com (Movie Mirror). No account or API key needed — just install and go. For MSone, install their own official addon (addon.malayalamsubtitles.org) alongside this one.',
+  description: 'Unofficial addon for Team GOAT and Movie Mirror Malayalam subtitles.',
   resources: ['subtitles'],
   types: ['movie', 'series'],
   catalogs: [],
