@@ -5,11 +5,6 @@ subtitle sites — [malayalamsubtitles.in](https://malayalamsubtitles.in) (Team 
 [moviemirrorsubtitles.com](https://moviemirrorsubtitles.com) (Movie Mirror) — for movies and
 series, and serves them to any Stremio-compatible app, including Stremio itself and Nuvio.
 
-**For MSone specifically**, install their own official addon instead of relying on this one:
-`https://addon.malayalamsubtitles.org/manifest.json`. It's built and run by the MSone team
-themselves, so it's more reliable than anything scraped from outside — install it alongside
-this addon and Stremio/Nuvio will show subtitles from all three sources together.
-
 ## How it works
 
 1. Stremio/Nuvio asks the addon for subtitles for an IMDb id (e.g. `tt6723592`).
@@ -78,13 +73,11 @@ addons, so make sure your host provides a TLS certificate (all three above do th
 
 - Open Stremio → the puzzle-piece **Addons** icon → paste your manifest URL
   (`https://<your-app>/manifest.json`) into the search bar at the top → **Install**.
-- Also install `https://addon.malayalamsubtitles.org/manifest.json` the same way for MSone.
 
 ## 4. Install into Nuvio
 
 - Open Nuvio → **Addons** screen → **Install via Manifest URL** (or the "+" / add-addon
   option) → paste the same `https://<your-app>/manifest.json` URL → confirm.
-- Also install `https://addon.malayalamsubtitles.org/manifest.json` the same way for MSone.
 
 Nuvio speaks the same addon protocol as Stremio, so no changes are needed between the two.
 No account, sign-up, or API key is needed anywhere in this — just the one manifest URL.

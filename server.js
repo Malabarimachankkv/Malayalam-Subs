@@ -4,6 +4,7 @@ const { getRouter } = require('stremio-addon-sdk');
 const addonInterface = require('./addon');
 const fileCache = require('./lib/fileCache');
 const moviemirror = require('./lib/moviemirror');
+const subtitleCache = require('./lib/subtitleCache');
 const pool = require('./lib/pool');
 const { searchTitles } = require('./lib/cinemeta');
 const { requireAdminAuth } = require('./lib/adminAuth');
@@ -102,6 +103,29 @@ app.delete('/admin/delete/:id', requireAdminAuth, async (req, res) => {
     res.json({ deleted: ok });
   } catch (err) {
     console.error('admin delete failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Purges one cached goat/moviemirror subtitle so the next request re-scrapes
+// live instead of serving whatever's stored. For clearing out entries that
+// got a bad response (HTML error/challenge page) cached before fetchFile.js
+// started validating content — use this once per reported-broken title
+// rather than wiping the whole cache.
+// e.g. DELETE /admin/subtitle-cache/moviemirror/tt31436476?type=movie
+app.delete('/admin/subtitle-cache/:source/:imdbId', requireAdminAuth, async (req, res) => {
+  try {
+    const { source, imdbId } = req.params;
+    if (source !== 'goat' && source !== 'moviemirror') {
+      return res.status(400).json({ error: 'source must be "goat" or "moviemirror"' });
+    }
+    const type = req.query.type === 'series' ? 'series' : 'movie';
+    const season = req.query.season ? parseInt(req.query.season, 10) : null;
+    const episode = req.query.episode ? parseInt(req.query.episode, 10) : null;
+    await subtitleCache.deleteCached(source, imdbId, type, season, episode);
+    res.json({ purged: true, source, imdbId, type, season, episode });
+  } catch (err) {
+    console.error('admin cache purge failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
