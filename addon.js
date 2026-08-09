@@ -78,13 +78,38 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       return parseInt(m[1] || m[2], 10);
     }
 
+    // Runs the season-qualified query and the bare-title fallback query at
+    // the SAME time rather than one after the other. This used to be
+    // sequential — wait for primaryQuery to fully fail (a full listing
+    // scan + page fetch to confirm IMDb id) before even starting
+    // fallbackQuery — which stacks two slow round-trips into one request
+    // and risks timing out, especially on a cold/sleeping free-tier host.
+    // Firing both at once means the fallback is already in flight by the
+    // time we find out primary failed, cutting worst-case latency roughly
+    // in half. It also fixes titles that will NEVER match the primary
+    // query at all — e.g. a source lists a brand-new show as just
+    // "Brown (2026)" with no "Season 1" anywhere in it, so a query for
+    // "Brown Season 1" scores zero every single time, not just on a slow
+    // day. Previously this always required a manual pool upload to work
+    // around; now the fallback's own result is available immediately.
     async function searchSource(fn) {
-      const primary = await fn(primaryQuery);
-      if (primary) return primary;
-      if (!fallbackQuery) return null;
+      if (!fallbackQuery) return fn(primaryQuery);
 
-      const fallback = await fn(fallbackQuery);
-      if (fallback && season) {
+      const [primary, fallback] = await Promise.all([
+        fn(primaryQuery).catch((err) => {
+          console.error('primary query failed:', err.message);
+          return null;
+        }),
+        fn(fallbackQuery).catch((err) => {
+          console.error('fallback query failed:', err.message);
+          return null;
+        }),
+      ]);
+
+      if (primary) return primary;
+      if (!fallback) return null;
+
+      if (season) {
         const foundSeason = extractSeasonNumber(fallback.matchedTitle);
         if (foundSeason !== null && foundSeason !== season) {
           return null; // confirmed different season — don't serve it
