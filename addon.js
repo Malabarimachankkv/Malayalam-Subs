@@ -157,24 +157,29 @@ builder.defineSubtitlesHandler(async ({ type, id }) => {
       })
     );
 
-    // Manually-uploaded fallback pool (B2-backed) — checked by exact IMDb
-    // id match rather than fuzzy title search, so it's reliable even for
-    // titles the scrapers can't find at all.
-    try {
-      const poolMatches = await pool.findMatches(imdbId, type, season, episode);
-      for (const match of poolMatches) {
-        const buffer = await pool.getFileBuffer(match);
-        const contentType = CONTENT_TYPES[match.ext] || 'application/x-subrip; charset=utf-8';
-        const key = fileCache.put({ buffer, ext: match.ext, contentType });
-        const servedUrl = `${PUBLIC_URL}/sub/${key}${match.ext}`;
-        subtitles.push({
-          id: `pool-${match.id}-${id}`,
-          url: servedUrl,
-          lang: SOURCE_LABELS.pool,
-        });
+    // Manually-uploaded fallback pool (B2-backed), checked by exact IMDb id
+    // match. Disabled by default: an uploaded file skips the same-site
+    // validation that scraped downloads now go through (lib/fetchFile.js),
+    // so a bad upload would go straight into the main addon's results with
+    // nothing catching it. Set ENABLE_POOL_SUBS=true to turn it back on
+    // once uploads get their own validation/review step.
+    if (process.env.ENABLE_POOL_SUBS === 'true') {
+      try {
+        const poolMatches = await pool.findMatches(imdbId, type, season, episode);
+        for (const match of poolMatches) {
+          const buffer = await pool.getFileBuffer(match);
+          const contentType = CONTENT_TYPES[match.ext] || 'application/x-subrip; charset=utf-8';
+          const key = fileCache.put({ buffer, ext: match.ext, contentType });
+          const servedUrl = `${PUBLIC_URL}/sub/${key}${match.ext}`;
+          subtitles.push({
+            id: `pool-${match.id}-${id}`,
+            url: servedUrl,
+            lang: SOURCE_LABELS.pool,
+          });
+        }
+      } catch (err) {
+        console.error('pool lookup failed:', err.message);
       }
-    } catch (err) {
-      console.error('pool lookup failed:', err.message);
     }
 
     // No cacheMaxAge: tell Stremio/Nuvio not to hold onto this response, so a
