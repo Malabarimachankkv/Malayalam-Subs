@@ -26,7 +26,7 @@ const SOURCE_LABELS = {
 
 const manifest = {
   id: 'community.malayalamsubs.goat-moviemirror',
-  version: '5.1.0',
+  version: '5.2.0',
   name: 'Malayalam Subtitles (Team GOAT + Movie Mirror)',
   description: 'Unofficial addon for Team GOAT and Movie Mirror Malayalam subtitles.',
   resources: ['subtitles'],

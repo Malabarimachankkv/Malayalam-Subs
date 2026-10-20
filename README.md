@@ -25,14 +25,20 @@ request, same as a browser cache.
 
 ### A note on Movie Mirror specifically
 
-Movie Mirror's `robots.txt` disallows automated access to its own search/filter page, so
-this addon doesn't use it. It also has no separate search API. Instead, the addon builds an
-index of Movie Mirror's public movie/series category listings (pages `robots.txt` does
-allow) in the background, the first time it's needed, then reuses that index for 12 hours.
-Practical effect: right after a cold start (or after 12h when the index refreshes), Movie
-Mirror results may be briefly missing from a lookup while the index builds — Team GOAT is
-unaffected and appears immediately either way. A minute or two later, Movie Mirror results
-start appearing normally.
+Movie Mirror is a WordPress site, so the addon asks its public WordPress REST API
+(`/wp-json/wp/v2/posts?search=…`) first — one request, and it sees a post the moment it is
+published, so brand-new titles work immediately. It also reads page 1 of the movie/series
+category listings as a freshness check, and keeps a full crawled index of both listings
+(rebuilt in the background every 12 hours, with the previous index kept in use while the
+rebuild runs) as a safety net for titles the site's own search can't find — for example a
+listing with a typo in its title, which the addon's fuzzy title matcher still catches.
+
+Download links are read from each release page. The site used to route them through a
+`?custom_download=` parameter; it now links straight to the file under `/wp-content/uploads/`
+(`.srt` or a per-season `.zip`). Both forms are supported. If Movie Mirror stops returning
+results for *new* titles while already-fetched titles keep working, that's the symptom of the
+page markup having changed again — run `node debug-moviemirror.js "<title>" <year> <ttid>` to
+see which stage breaks.
 
 ## 1. Run it locally (fastest way to test)
 

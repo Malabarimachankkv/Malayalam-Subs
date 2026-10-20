@@ -1,18 +1,24 @@
 /**
  * Standalone diagnostic — run with `node debug-moviemirror.js` from the repo
  * root (after `npm install`), with real network access. Prints exactly how
- * far the Movie Mirror lookup for "Hokum" (2026) gets, so we can see which
- * stage actually breaks instead of guessing.
+ * far the Movie Mirror lookup for a title gets, so we can see which stage
+ * actually breaks instead of guessing.
  *
- * Usage: node debug-moviemirror.js "Hokum" 2026 tt35672862
+ * Usage: node debug-moviemirror.js "<title>" <year> <imdbId>
+ *   e.g. node debug-moviemirror.js "Hope" 2026 tt27369017
+ *        node debug-moviemirror.js "Shattered" 1991 tt0102900
+ *
+ * Add --wait-index to also wait for the full background listing crawl and
+ * report whether the title is in it (slow: ~120 page fetches).
  */
 const moviemirror = require('./lib/moviemirror');
 const { scoreCandidate } = require('./lib/matching');
 
-const [, , queryArg, yearArg, imdbArg] = process.argv;
-const query = queryArg || 'Hokum';
-const year = yearArg ? parseInt(yearArg, 10) : 2026;
-const imdbId = imdbArg || 'tt35672862';
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+const waitIndex = process.argv.includes('--wait-index');
+const query = args[0] || 'Hope';
+const year = args[1] ? parseInt(args[1], 10) : 2026;
+const imdbId = args[2] || 'tt27369017';
 
 function log(label, value) {
   console.log(`\n=== ${label} ===`);
@@ -30,63 +36,59 @@ async function waitForIndex(maxWaitMs = 5 * 60 * 1000) {
     await new Promise((r) => setTimeout(r, 2000));
     index = moviemirror.getIndexNonBlocking();
   }
-  console.log(''); // newline after dots
+  console.log('');
   return index;
 }
 
 (async () => {
   try {
-    console.log(`Waiting for Movie Mirror index to build (this crawls ~100+ pages, can take a minute)...`);
-    const index = await waitForIndex();
+    console.log(`Query="${query}" year=${year} imdb=${imdbId}`);
 
-    log('Index size (total movies+series entries found)', index.length);
+    // Stage 1: the REST API search (what a brand-new post is found by).
+    const api = await moviemirror.searchViaApi(query);
+    log(`REST API search results (${api.length})`, api.map((r) => `${r.title}  ->  ${r.pageUrl}`).join('\n') || '(none)');
 
-    if (index.length === 0) {
-      console.log('Index built but came back EMPTY — the crawl itself is failing (check for errors printed above, e.g. axios/network errors per page).');
-      process.exit(1);
-    }
+    // Stage 2: the recent set (category page 1 + homepage).
+    const recent = await moviemirror.getRecentReleases();
+    log(`Recent listing entries (${recent.length})`, recent.map((r) => r.title).join('\n') || '(none — category/homepage fetch failed?)');
 
-    // Does the index contain anything with "hokum" in the title at all?
-    const hokumEntries = index.filter((r) => r.title.toLowerCase().includes('hokum'));
-    log(`Entries with "hokum" in the title (raw, case-insensitive)`, hokumEntries);
-
-    if (!hokumEntries.length) {
-      console.log('Hokum is NOT in the crawled index at all. The crawl is either:');
-      console.log('  - not reaching the page it is listed on (check maxPage detection / concurrency failures per page), or');
-      console.log('  - excluding it via isReleaseLink/NON_RELEASE_PATH for some reason specific to its real href.');
-      console.log('Try increasing logging inside crawlSection()/fetchListingPage() to see which pages failed.');
-      process.exit(1);
-    }
-
-    // Now run the exact same scoring the real findSubtitleUrl() uses.
-    const scored = index
+    const pool = [...api, ...recent];
+    const scored = pool
       .map((r) => ({ ...r, score: scoreCandidate(query, year, r.title) }))
       .filter((r) => r.score > 0)
       .sort((a, b) => b.score - a.score);
+    log(`Candidates scoring > 0 (from REST + recent)`, scored.slice(0, 10));
 
-    log(`Candidates scoring > 0 for query="${query}" year=${year}`, scored.slice(0, 10));
+    if (scored.length) {
+      const details = await moviemirror.extractReleaseDetails(scored[0].pageUrl);
+      log(`Release page details for top candidate (${scored[0].pageUrl})`, details);
+      if (!details.downloadUrl) {
+        console.log('No download link found on the release page — the page markup changed again, or the fetch was blocked. Open the URL in a browser and compare against parseReleasePage() in lib/moviemirror.js.');
+      }
+    }
 
-    if (!scored.length) {
-      console.log('Hokum IS in the index, but scoreCandidate() never scores it above 0 for this query/year.');
-      console.log('Print the raw title text above and compare word-by-word against significantWords() in lib/matching.js.');
-      process.exit(1);
+    if (waitIndex) {
+      console.log('\nWaiting for the full Movie Mirror index to build (crawls ~120 pages)...');
+      const index = await waitForIndex();
+      log('Index size (movies+series entries)', index.length);
+      const hits = index.filter((r) => scoreCandidate(query, year, r.title) > 0);
+      log(`Index entries matching "${query}"`, hits);
     }
 
     // Full real call, to see what findSubtitleUrl actually returns end to end.
     const result = await moviemirror.findSubtitleUrl(query, year, imdbId);
     log('findSubtitleUrl() result', result);
-
     if (!result) {
-      console.log('Candidates scored fine, but findSubtitleUrl() still returned null — likely extractReleaseDetails() failed to pull a downloadUrl/imdbId from the release page (check for logged errors above), or the IMDb id never matched any of the top 5 candidates and none had a usable downloadUrl either.');
+      console.log('findSubtitleUrl() returned null — see the stages above for where it stopped.');
       process.exit(1);
     }
 
-    // Finally, try the actual file download with the (now-fixed) per-source referer.
     console.log('\nAttempting fetchSubtitleFile()...');
     const file = await moviemirror.fetchSubtitleFile(result.url, null);
     log('fetchSubtitleFile() result', { ext: file.ext, contentType: file.contentType, bytes: file.buffer.length });
     console.log('\nSUCCESS — first 200 bytes of the file:');
     console.log(file.buffer.toString('utf8', 0, 200));
+    process.exit(0);
   } catch (err) {
     console.error('\nDIAGNOSTIC CRASHED:', err);
     process.exit(1);
