@@ -1,9 +1,10 @@
 const express = require('express');
 const multer = require('multer');
 const { getRouter } = require('stremio-addon-sdk');
-const addonInterface = require('./addon');
+const { buildAddon } = require('./addon');
 const fileCache = require('./lib/fileCache');
 const moviemirror = require('./lib/moviemirror');
+const goat = require('./lib/goat');
 const subtitleCache = require('./lib/subtitleCache');
 const pool = require('./lib/pool');
 const { searchTitles } = require('./lib/cinemeta');
@@ -24,9 +25,24 @@ const app = express();
 // starts the crawl over) — see README for the actual fix for that (a free
 // uptime monitor pinging /manifest.json every few minutes).
 moviemirror.getIndexNonBlocking();
+// Same idea for Team GOAT's /movies + /series listing (~50 small pages),
+// which backs the "Team GOAT · Movies/Series" catalog rows.
+goat.getSectionsNonBlocking();
 
-// Mounts /manifest.json, /subtitles/*, etc. (the standard Stremio addon protocol)
-app.use(getRouter(addonInterface));
+// Mounts /manifest.json, /catalog/*, /meta/*, /subtitles/*, etc. (the
+// standard Stremio addon protocol). buildAddon() is async because the
+// manifest's Festivals row reads the live festival list first (3s budget,
+// with a built-in fallback), so the router is attached once it resolves —
+// the other routes below are registered immediately.
+let addonRouter = null;
+const routerReady = buildAddon().then((addonInterface) => {
+  addonRouter = getRouter(addonInterface);
+  return addonRouter;
+});
+app.use((req, res, next) => {
+  if (addonRouter) return addonRouter(req, res, next);
+  routerReady.then((router) => router(req, res, next)).catch(next);
+});
 
 // Serves the actual subtitle files this addon downloads/extracts from these
 // sites (e.g. /sub/ab12cd34ef.srt) so players never have to open a source

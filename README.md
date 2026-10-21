@@ -23,6 +23,49 @@ series, and serves them to any Stremio-compatible app, including Stremio itself 
 Nothing is permanently stored or redistributed — files are only held in memory briefly per
 request, same as a browser cache.
 
+## Catalog rows (v5.3)
+
+Besides subtitles, the addon now adds browsable rows to Stremio's Board / Discover page, so
+you can see what each site has translated without leaving Stremio. Every row is labelled with
+the site it comes from:
+
+| Row | What it shows | Filters |
+|---|---|---|
+| **Team GOAT · Latest Releases** | Everything on malayalamsubtitles.in, newest first (movies and series mixed) | — |
+| **Team GOAT · Movies** | The site's `/movies` listing | Genre (Action, Thriller, K-Drama, …), search |
+| **Team GOAT · Series** | The site's `/series` listing | Genre, search |
+| **Team GOAT · Festivals** | The site's `/festivals` collections (Jackie Chan fest, Short film fest, …) | Festival (genre dropdown) |
+| **Movie Mirror · Latest Releases** | Everything on moviemirrorsubtitles.com, newest first | — |
+| **Movie Mirror · Movies** | The site's "Movies" category | Genre (the site's own categories: Thriller, GEM, Indian, IFFK, Oscar, …), search |
+| **Movie Mirror · Series** | The site's "Series" category | Genre, search |
+
+How it works:
+
+- **Team GOAT** has no API, so the addon crawls `/movies/N/` and `/series/N/` (~50 small pages,
+  12 posters each) once an hour in the background, and reads genres/languages from the
+  all-in-one `/search-and-download` listing it already uses for subtitle lookups. The site
+  serves its *home* listing (not a 404) for page numbers past the end, so the crawler stops at
+  the last page that still has a "Next" link into that section.
+- **Movie Mirror** is queried through its public WordPress REST API
+  (`/wp-json/wp/v2/posts?categories[terms][]=78&categories[terms][]=30&categories[operator]=AND`),
+  which also does the pagination, genre filtering and search. Posters come from
+  `/wp-json/wp/v2/media?include=…` in one request per page. The genre list is the site's
+  category ids (`/wp-json/wp/v2/categories`) hard-coded in `lib/catalogs.js` (`MM_GENRES`) —
+  add a line there if the site adds a category you want.
+- Each item is resolved to its **IMDb id** by reading the IMDb link on the site's release page
+  (cached 24h, max 6 pages fetched at a time), so clicking a poster opens the normal Stremio
+  details page — with streams from your other addons and this addon's subtitles. The first
+  open of a row page is therefore a few seconds slower than later ones. If a release page has
+  no IMDb link, the addon tries a Cinemeta title+year search; if that fails too, the item is
+  kept in the row under an `mlsub:` id that opens a page showing the poster and a link to the
+  site, so nothing silently disappears from a row.
+- Catalog responses are cached for 15 minutes (`cacheMaxAge`), searches for 1 minute.
+
+To test after deploying: open `https://<your-app>/manifest.json` and check `catalogs` is
+non-empty, then open `https://<your-app>/catalog/movie/mm-latest.json` and
+`https://<your-app>/catalog/movie/goat-movies/genre=Action.json` — each should return a
+`metas` array with `tt…` ids and posters.
+
 ### A note on Movie Mirror specifically
 
 Movie Mirror is a WordPress site, so the addon asks its public WordPress REST API
