@@ -55,10 +55,25 @@ How it works:
 - Each item is resolved to its **IMDb id** by reading the IMDb link on the site's release page
   (cached 24h, max 6 pages fetched at a time), so clicking a poster opens the normal Stremio
   details page — with streams from your other addons and this addon's subtitles. The first
-  open of a row page is therefore a few seconds slower than later ones. If a release page has
-  no IMDb link, the addon tries a Cinemeta title+year search; if that fails too, the item is
-  kept in the row under an `mlsub:` id that opens a page showing the poster and a link to the
-  site, so nothing silently disappears from a row.
+  open of a row page is therefore a few seconds slower than later ones. The linked id is
+  checked against Cinemeta first, because the links are pasted by hand and are occasionally
+  wrong (Movie Mirror's "The Cycle (2026)" page linked the Tamil film "Vellai Pookal"); an id
+  whose title *and* year both disagree with the release is dropped. If a release page has no
+  IMDb link, or its link was dropped, the addon tries a Cinemeta title+year search (the year
+  comes from the results' `releaseInfo`, which is where Cinemeta's search puts it); if that
+  fails too, the item is kept in the row under an `mlsub:` id that opens a page showing the
+  poster and a link to the site, so nothing silently disappears from a row.
+- Each row item's description is the site's own **Malayalam synopsis** (Team GOAT: the plot
+  paragraphs under the download button, read from the same page fetch that finds the IMDb
+  link; Movie Mirror: the post `excerpt` the REST listing already returns, so no extra
+  request), with the "Malayalam subtitles from …" source line under it. `lib/synopsis.js`
+  picks the longest run of mostly-Malayalam paragraphs that don't mention the team/site, so
+  the sites' taglines and disclaimers are skipped. Check one page with
+  `node debug-synopsis.js <release page URL>` (or `--mm-list` for Movie Mirror's latest).
+  Note: this is the *catalog* description (shown in Stremio's Discover/Board side panel and
+  wherever a client shows row-item text). A title's full details page is rendered from the
+  client's own metadata source (Cinemeta in Stremio, TMDB in Nuvio), which this addon doesn't
+  replace — except for `mlsub:` items, whose details page also uses this synopsis.
 - Catalog responses are cached for 15 minutes (`cacheMaxAge`), searches for 1 minute.
 
 To test after deploying: open `https://<your-app>/manifest.json` and check `catalogs` is
